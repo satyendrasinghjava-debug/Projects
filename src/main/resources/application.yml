@@ -1,0 +1,181 @@
+# ---------------------------------------------------------------------------
+# © 2026 Satyendra Singh. All Rights Reserved.
+# Author: Satyendra Singh
+#
+# SentinelGuard - Reactive Distributed Rate-Limiter and Fraud Detection Engine
+#
+# Every infrastructure coordinate is environment-overridable so that the very
+# same image runs locally under docker-compose and in a cluster with no rebuild.
+# ---------------------------------------------------------------------------
+
+server:
+  port: ${SERVER_PORT:8080}
+  # Let in-flight exchanges drain before the event loop is torn down.
+  shutdown: graceful
+  netty:
+    connection-timeout: 5s
+    idle-timeout: 60s
+  # Netty must never trust a client-supplied forwarded header by itself; the
+  # engine decides what to trust via sentinelguard.identity.*
+  forward-headers-strategy: none
+
+spring:
+  application:
+    name: sentinelguard
+  main:
+    banner-mode: log
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # Credentials are injected as SPRING_DATA_REDIS_USERNAME / _PASSWORD from a
+      # secret store; deliberately absent here so no blank ACL user is sent.
+      database: ${REDIS_DATABASE:0}
+      client-name: sentinelguard
+      # A quota lookup that takes longer than this is worse than useless; the
+      # limiter's fail-open/fail-closed policy takes over instead.
+      timeout: 2s
+      connect-timeout: 2s
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    client-id: sentinelguard
+    producer:
+      # Transport-level tuning (idempotence, acks, batching, timeouts) is applied
+      # programmatically in KafkaConfig so the guarantees cannot be weakened by
+      # an accidental property override.
+      properties:
+        metadata.max.age.ms: 180000
+
+# ---------------------------------------------------------------------------
+# Engine configuration
+# ---------------------------------------------------------------------------
+sentinelguard:
+
+  rate-limit:
+    enabled: true
+    # false = fail-closed: shed traffic when Redis is unreachable. Choose this
+    # for payment or auth surfaces, where unmetered traffic is the bigger risk.
+    fail-open: ${SENTINELGUARD_FAIL_OPEN:true}
+    key-prefix: sentinelguard:rl
+    excluded-paths:
+      - /actuator/**
+      - /favicon.ico
+
+    # Applied when no route pattern and no identity override matches.
+    default-policy:
+      capacity: 100
+      refill-tokens: 100
+      refill-period: 1m
+      tokens-per-request: 1
+      bucket-ttl: 10m
+
+    policies:
+      payments-strict:
+        capacity: 20
+        refill-tokens: 20
+        refill-period: 1m
+        tokens-per-request: 1
+        bucket-ttl: 10m
+      standard:
+        capacity: 100
+        refill-tokens: 100
+        refill-period: 1m
+        tokens-per-request: 1
+        bucket-ttl: 10m
+      partner-generous:
+        capacity: 1000
+        refill-tokens: 1000
+        refill-period: 1m
+        tokens-per-request: 1
+        bucket-ttl: 30m
+      anonymous-tight:
+        capacity: 10
+        refill-tokens: 10
+        refill-period: 1m
+        tokens-per-request: 1
+        bucket-ttl: 5m
+
+    # First match wins, so order the most specific pattern first.
+    routes:
+      - path-pattern: /api/v1/transactions/**
+        policy: payments-strict
+      - path-pattern: /api/v1/transactions
+        policy: payments-strict
+      - path-pattern: /api/v1/sentinel/**
+        policy: standard
+
+    # Consulted only when no route matched.
+    identity-policies:
+      ANONYMOUS: anonymous-tight
+
+  fraud:
+    enabled: true
+    key-prefix: sentinelguard:fraud
+    observation-window: 1m
+    window-ttl: 5m
+    burst-rejection-threshold: 5
+    distinct-path-threshold: 15
+    # Only MEDIUM and above reach Kafka; LOW is metered but not published.
+    publish-threshold: MEDIUM
+    suspicious-user-agent-patterns:
+      - "(?i).*\\b(curl|wget|libwww-perl|httpie)\\b.*"
+      - "(?i).*(python-requests|aiohttp|okhttp|go-http-client|java/\\d).*"
+      - "(?i).*(scrapy|nikto|sqlmap|nmap|masscan|zgrab).*"
+      - "(?i).*(headlesschrome|phantomjs|puppeteer|playwright).*"
+
+  identity:
+    api-key-header: X-API-Key
+    forwarded-header: X-Forwarded-For
+    correlation-header: X-Correlation-Id
+    # Enable ONLY behind a proxy that overwrites the header. Otherwise a caller
+    # can rotate it and mint an unlimited number of fresh quotas.
+    trust-forwarded-headers: ${SENTINELGUARD_TRUST_FORWARDED:true}
+
+  alerts:
+    topic: ${SENTINELGUARD_ALERT_TOPIC:fraud-alerts}
+    partitions: 6
+    replication-factor: 1
+    auto-create-topic: true
+    send-timeout: 5s
+
+# ---------------------------------------------------------------------------
+# Observability
+# ---------------------------------------------------------------------------
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+  health:
+    redis:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
+logging:
+  level:
+    root: INFO
+    com.satyendra.sentinelguard: ${SENTINELGUARD_LOG_LEVEL:INFO}
+    # Uncomment to see every EVALSHA dispatched by the limiter.
+    # org.springframework.data.redis.core: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
