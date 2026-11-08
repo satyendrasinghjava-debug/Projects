@@ -12,3 +12,6 @@ target/
 .project
 *.log
 .DS_Store
+.factorypath
+.apt_generated/
+.sts4-cache/
