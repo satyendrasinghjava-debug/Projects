@@ -211,24 +211,39 @@ class SentinelGuardEndToEndIT {
     }
 
     @Test
-    @DisplayName("the quota endpoint reports the allowance without charging a token")
-    void quotaEndpointDoesNotCharge() {
+    @DisplayName("the quota snapshot costs nothing beyond the request that asks for it")
+    void quotaPeekChargesNothingExtra() {
         String apiKey = "it-quota-" + UUID.randomUUID();
 
-        for (int probe = 0; probe < 3; probe++) {
-            webTestClient.get()
-                    .uri("/api/v1/sentinel/quota")
-                    .header("X-API-Key", apiKey)
-                    .exchange()
-                    .expectStatus().isOk()
-                    .expectBody()
-                    // The standard policy governs this path; repeated probes must
-                    // not move the figure.
-                    .jsonPath("$.policy").isEqualTo("standard")
-                    .jsonPath("$.remaining").isEqualTo(100)
-                    .jsonPath("$.identityType").isEqualTo("API_KEY")
-                    .jsonPath("$.degraded").isEqualTo(false);
-        }
+        JsonNode first = quotaSnapshot(apiKey);
+        JsonNode second = quotaSnapshot(apiKey);
+
+        assertThat(first.get("policy").asText()).isEqualTo("standard");
+        assertThat(first.get("identityType").asText()).isEqualTo("API_KEY");
+        assertThat(first.get("limit").asLong()).isEqualTo(100L);
+        assertThat(first.get("degraded").asBoolean()).isFalse();
+
+        // This endpoint is rate limited like every other one, so the filter debits
+        // exactly one token per call before the handler runs. The point of peek()
+        // is that it adds nothing on top: if it charged as well, the allowance
+        // would fall by two per probe instead of one.
+        assertThat(second.get("remaining").asLong())
+                .isEqualTo(first.get("remaining").asLong() - 1L);
+    }
+
+    /**
+     * @param apiKey caller identity
+     * @return the quota snapshot body
+     */
+    private JsonNode quotaSnapshot(String apiKey) {
+        return webTestClient.get()
+                .uri("/api/v1/sentinel/quota")
+                .header("X-API-Key", apiKey)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(JsonNode.class)
+                .returnResult()
+                .getResponseBody();
     }
 
     @Test

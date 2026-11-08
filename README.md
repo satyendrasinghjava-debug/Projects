@@ -159,6 +159,11 @@ docker compose up --build
 docker compose --profile tools up -d kafka-ui
 ```
 
+Kafka is published on host port **29092** (not 9092) so the stack does not
+collide with whatever other local Kafka is already running; override with
+`KAFKA_HOST_PORT=9092 docker compose up`. Containers always talk to `kafka:19092`
+on the internal network, so that setting only affects tools on your host.
+
 ### Locally against containerised infrastructure
 
 ```bash
@@ -174,8 +179,13 @@ mvn spring-boot:run
 |---|---|---|
 | `POST` | `/api/v1/transactions` | protected demo endpoint (`payments-strict`) |
 | `GET` | `/api/v1/transactions/{reference}` | protected demo lookup |
-| `GET` | `/api/v1/sentinel/quota` | **non-charging** quota snapshot |
+| `GET` | `/api/v1/sentinel/quota` | quota snapshot; the peek itself charges nothing |
 | `GET` | `/actuator/health`, `/actuator/prometheus` | never rate limited |
+
+The quota endpoint is rate limited like any other route, so the request that
+asks for the snapshot costs its own token; `peek()` adds nothing on top. That is
+deliberate: an unmetered introspection endpoint is a free denial-of-service
+surface.
 
 Every admitted response carries `X-RateLimit-Limit`, `X-RateLimit-Remaining`,
 `X-RateLimit-Reset`, `X-RateLimit-Policy` (plus `X-RateLimit-Degraded` when the

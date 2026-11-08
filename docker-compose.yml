@@ -58,14 +58,16 @@ services:
     container_name: sentinelguard-kafka
     restart: unless-stopped
     ports:
-      # 9092 is published for tools running on the host; containers use 19092.
-      - "9092:9092"
+      # Published for tools running on the host; containers always use 19092.
+      # 9092 is left alone by default because it is the port every other local
+      # Kafka already occupies - override with KAFKA_HOST_PORT if you want it.
+      - "${KAFKA_HOST_PORT:-29092}:9092"
     environment:
       CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: INTERNAL://0.0.0.0:19092,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:19092,EXTERNAL://localhost:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:19092,EXTERNAL://localhost:${KAFKA_HOST_PORT:-29092}
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER

@@ -48,7 +48,9 @@ class CorrelationIdWebFilterTest {
 
         filter.filter(exchange, noOpChain()).block(Duration.ofSeconds(1));
 
-        assertThat(exchange.getAttribute(CorrelationIdWebFilter.CORRELATION_ID_ATTRIBUTE))
+        // The cast is required: ServerWebExchange.getAttribute is <T> T, so without
+        // a target type AssertJ cannot choose between its Predicate overloads.
+        assertThat((String) exchange.getAttribute(CorrelationIdWebFilter.CORRELATION_ID_ATTRIBUTE))
                 .isEqualTo("trace-123");
         assertThat(exchange.getResponse().getHeaders().getFirst("X-Correlation-Id"))
                 .isEqualTo("trace-123");

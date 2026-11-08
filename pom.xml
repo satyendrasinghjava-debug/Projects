@@ -46,6 +46,14 @@
         <!-- Coverage gate: 90% branch coverage over the business-logic packages. -->
         <jacoco.branch.minimum>0.90</jacoco.branch.minimum>
         <jacoco.version>0.8.12</jacoco.version>
+
+        <!--
+          Spring Boot 3.4.1 manages Testcontainers 1.20.4, whose bundled docker-java
+          client cannot negotiate with Docker Engine 29.x: every /info call is
+          answered 400 with an empty payload, so no Docker environment is detected.
+          Pinned forward to a release that speaks the current Engine API.
+        -->
+        <testcontainers.version>1.21.4</testcontainers.version>
     </properties>
 
     <dependencies>
@@ -166,7 +174,12 @@
                 </configuration>
             </plugin>
 
-            <!-- Docker-backed integration tests: *IT classes, skippable with -DskipITs. -->
+            <!--
+              Docker-backed integration tests: *IT classes, skippable with -DskipITs.
+              spring-boot-starter-parent already binds failsafe's integration-test and
+              verify goals under the 'default' execution, so declaring another execution
+              here would bind the plugin twice. Only the includes are contributed.
+            -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
@@ -175,15 +188,6 @@
                         <include>**/*IT.java</include>
                     </includes>
                 </configuration>
-                <executions>
-                    <execution>
-                        <id>integration-tests</id>
-                        <goals>
-                            <goal>integration-test</goal>
-                            <goal>verify</goal>
-                        </goals>
-                    </execution>
-                </executions>
             </plugin>
 
             <!-- Branch-coverage enforcement over the business-logic packages. -->
